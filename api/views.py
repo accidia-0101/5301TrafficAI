@@ -24,20 +24,38 @@ def _json(req: HttpRequest) -> dict:
 @require_POST
 def play_view(request: HttpRequest):
     body = _json(request)
-    cid = (body.get("camera_id") or "").strip()
-    if not cid:
+
+    # -------- 统一解析相机ID --------
+    ids = []
+    cid_single = (body.get("camera_id") or "").strip()
+    if cid_single:
+        ids.append(cid_single)
+    cid_list = body.get("camera_ids")
+    if isinstance(cid_list, list):
+        ids += [x.strip() for x in cid_list if isinstance(x, str) and x.strip()]
+
+    if not ids:
         return JsonResponse({"ok": False, "error": "camera_id 缺失"}, status=400)
-    try:
-        src = get_source(cid)
-        rt.INTENDED[cid] = src
-        return JsonResponse({
-            "ok": True,
-            "camera_id": cid,
-            "sse_alerts_url": f"/sse/alerts?camera_id={cid}",
-            "ts": int(time.time())
-        })
-    except Exception as e:
-        return JsonResponse({"ok": False, "error": str(e)}, status=400)
+
+    loop = rt.ensure_bg_loop()
+    results = []
+    for cid in ids:
+        try:
+            src = get_source(cid)
+            rt.INTENDED[cid] = src
+            results.append({
+                "camera_id": cid,
+                "sse_alerts_url": f"/sse/alerts?camera_id={cid}",
+                "ts": int(time.time())
+            })
+        except Exception as e:
+            results.append({"camera_id": cid, "error": str(e)})
+
+    return JsonResponse({
+        "ok": any("error" not in r for r in results),
+        "results": results
+    })
+
 
 
 # -------- /sse/alerts --------
