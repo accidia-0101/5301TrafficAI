@@ -1,15 +1,11 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import json, time, asyncio
-from queue import Queue, Empty
-from django.http import JsonResponse, HttpRequest, StreamingHttpResponse, HttpResponse
+import json, time
+from django.http import JsonResponse, HttpRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST, require_GET
-
 import api.runtime_state as rt
-from api.camera_map import get_source
-from events.session_single import SingleFileSession
-from events.Accident_detect.accident_detector import run_accident_detector_multi
+from api.session_manager import SessionManager
 
 
 def _json(req: HttpRequest) -> dict:
@@ -24,137 +20,35 @@ def _json(req: HttpRequest) -> dict:
 @require_POST
 def play_view(request: HttpRequest):
     body = _json(request)
-
-    # -------- 统一解析相机ID --------
     ids = []
-    cid_single = (body.get("camera_id") or "").strip()
-    if cid_single:
-        ids.append(cid_single)
-    cid_list = body.get("camera_ids")
-    if isinstance(cid_list, list):
-        ids += [x.strip() for x in cid_list if isinstance(x, str) and x.strip()]
-
+    if isinstance(body.get("camera_id"), str):
+        ids.append(body["camera_id"].strip())
+    if isinstance(body.get("camera_ids"), list):
+        ids += [x.strip() for x in body["camera_ids"] if isinstance(x, str) and x.strip()]
     if not ids:
         return JsonResponse({"ok": False, "error": "camera_id 缺失"}, status=400)
 
-    loop = rt.ensure_bg_loop()
-    results = []
-    for cid in ids:
-        try:
-            src = get_source(cid)
-            rt.INTENDED[cid] = src
-            results.append({
-                "camera_id": cid,
-                "sse_alerts_url": f"/sse/alerts?camera_id={cid}",
-                "ts": int(time.time())
-            })
-        except Exception as e:
-            results.append({"camera_id": cid, "error": str(e)})
-
-    return JsonResponse({
-        "ok": any("error" not in r for r in results),
-        "results": results
-    })
-
+    data = SessionManager.register(ids)
+    return JsonResponse({"ok": True, **data})
 
 
 # -------- /sse/alerts --------
 @require_GET
 def alerts_stream(request: HttpRequest):
-    cid = (request.GET.get("camera_id") or "").strip()
-    if not cid:
-        return HttpResponse("camera_id 缺失", status=400)
-
     loop = rt.ensure_bg_loop()
-
-    # 启动会话
-    if cid not in rt.SESSIONS:
-        if cid not in rt.INTENDED:
-            return HttpResponse("未登记该 camera_id", status=404)
-        sess = SingleFileSession(camera_id=cid, file_path=rt.INTENDED[cid], bus=rt.BUS)
-        sess.start(loop=loop)
-        rt.SESSIONS[cid] = sess
-
-    # 启动检测器（一次）
-    if rt.DETECTOR_TASK is None or getattr(rt.DETECTOR_TASK, "done", lambda: False)():
-        async def _run_multi():
-            await run_accident_detector_multi(rt.BUS, camera_ids=list(rt.SESSIONS.keys()), batch_size=4, poll_ms=20)
-        rt.DETECTOR_TASK = asyncio.run_coroutine_threadsafe(_run_multi(), loop)
-        print(f"[detector] started for cams={list(rt.SESSIONS.keys())}")
-
-    # ====== SSE 输出 ======
-    q: "Queue[bytes]" = Queue(maxsize=256)
-
-    def _start_pipe(topic: str):
-        async def _pipe():
-            async with rt.BUS.subscribe(topic, mode="fifo", maxsize=64) as subq:
-
-                while True:
-                    evt = await subq.get()
-                    print(f"[SSE] received topic={topic} evt={evt}")
-                    payload = {
-                        "camera_id": evt.get("camera_id"),
-                        "type": evt.get("type"),
-                        "happened": evt.get("happened", True),
-                        "confidence": evt.get("confidence", 0.0),
-                        "ts_unix": time.time(),
-                        "frame_idx": evt.get("frame_idx"),
-                        "pts_in_video": evt.get("pts_in_video"),
-                    }
-                    data = f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode()
-                    try:
-                        q.put_nowait(data)
-                    except Exception:
-                        try: _ = q.get_nowait()
-                        except Exception: pass
-                        q.put_nowait(data)
-        return asyncio.run_coroutine_threadsafe(_pipe(), loop)
-
-    subs = [
-        _start_pipe(f"accidents.open:{cid}"),
-        _start_pipe(f"accidents.close:{cid}")
-    ]
-
-    def _stream():
-        yield b": connected\n\n"
-        last = time.time()
-        try:
-            while True:
-                try:
-                    chunk = q.get(timeout=1.0)
-                    yield chunk
-                except Empty:
-                    now = time.time()
-                    if now - last >= 10:
-                        yield b": ping\n\n"
-                        last = now
-        finally:
-            for s in subs:
-                s.cancel()
-
-    resp = StreamingHttpResponse(_stream(), content_type="text/event-stream")
-    resp["Cache-Control"] = "no-cache"
-    resp["X-Accel-Buffering"] = "no"
-    return resp
+    SessionManager.start_all(loop)
+    return SessionManager.stream(loop)
 
 
 # -------- /api/stop --------
 @csrf_exempt
 @require_POST
 def stop_view(request: HttpRequest):
-    body = _json(request)
-    cid = (body.get("camera_id") or "").strip()
-    if not cid:
-        return JsonResponse({"ok": False, "error": "camera_id 缺失"}, status=400)
-
-    sess = rt.SESSIONS.pop(cid, None)
-    if not sess:
-        return JsonResponse({"ok": False, "error": "该相机未运行"}, status=404)
-
     loop = rt.ensure_bg_loop()
-    try:
-        sess.stop(loop=loop)
-        rt.INTENDED.pop(cid, None)
-        return JsonResponse({"ok": True, "camera_id": cid, "stopped": True, "ts": int(time.time())})
-    except Exception as e:
-        return JsonResponse({"ok": False, "error": str(e)}, status=500)
+    stopped = SessionManager.stop_all(loop)
+    return JsonResponse({
+        "ok": True,
+        "sse_id": SessionManager.GLOBAL_SSE_ID,
+        "stopped_cameras": stopped,
+        "ts": int(time.time())
+    })

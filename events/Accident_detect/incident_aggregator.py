@@ -76,27 +76,9 @@ class AccidentAggregator:
         self._counter += 1
         return f"{self.session_id}-{self.camera_id}-{self._counter:06d}"
 
-    # async def _emit_open(self, inc: _Incident) -> None:
-    #     ev = {
-    #         "type": "accident_open",
-    #         "session_id": self.session_id,
-    #         "incident_id": inc.id,
-    #         "camera_id": self.camera_id,
-    #         "start_ts": inc.start_ts,
-    #         "start_frame_idx": inc.start_idx,
-    #         "peak_confidence": inc.peak_conf,
-    #     }
-    #     await self.bus.publish(topic_for(_TOPIC_OPEN_BASE, self.camera_id), ev)
-    #     print(f"🚨 OPEN {ev}")
     async def _emit_open(self, inc: _Incident, det: Detection | None = None) -> None:
         ev = {
-            # "type": "accident_open",
-            # "session_id": self.session_id,
-            # "incident_id": inc.id,
-            # "camera_id": self.camera_id,
-            # "start_ts": inc.start_ts,
-            # "start_frame_idx": inc.start_idx,
-            # "peak_confidence": inc.peak_conf,
+
             "type": "accident_open",
             "camera_id": self.camera_id,
             "frame_idx": inc.start_idx,  # ← 改名，统一
@@ -109,24 +91,6 @@ class AccidentAggregator:
 
         await self.bus.publish(topic_for(_TOPIC_OPEN_BASE, self.camera_id), ev)
         print(f"🚨 OPEN {ev}")
-    # async def _schedule_close(self, inc: _Incident) -> None:
-    #     """结案并进入合并观察窗口：先缓存在 _pending_close；
-    #     若窗口内无再开案，则真正发布 close；若窗口内再开案则合并。
-    #     """
-    #     close_ev = {
-    #         "type": "accident_close",
-    #         "session_id": self.session_id,
-    #         "incident_id": inc.id,
-    #         "camera_id": self.camera_id,
-    #         "start_ts": inc.start_ts,
-    #         "end_ts": inc.end_ts,
-    #         "duration_sec": max(0.0, inc.end_ts - inc.start_ts),
-    #         "peak_confidence": inc.peak_conf,
-    #         "pos_frames": inc.pos_frames,
-    #     }
-    #     self._pending_close = close_ev
-    #     self._pending_close_time = inc.end_ts
-    #     print(f"⏳ CLOSE (pending merge) {close_ev}")
 
     async def _schedule_close(self, inc: _Incident, det: Detection | None = None) -> None:
         """结案并进入合并观察窗口"""
@@ -271,36 +235,42 @@ class AccidentAggregator:
                 self._neg_streak = 0
 
     # ---------- flush ----------
+    # ---------- flush ----------
     async def flush(self) -> None:
         """视频/会话结束时：
         - 若仍开案：直接形成 close 并发布（不再合并）。
         - 若有 pending close：直接发布并清空。
         """
-        # 发布 pending close
+        did_close = False
+
+        # 1️⃣ 若仍有 pending close → 发布并清空
         if self._pending_close is not None:
             await self.bus.publish(topic_for(_TOPIC_CLOSE_BASE, self.camera_id), self._pending_close)
             print(f"✅ CLOSE (emit pending) {self._pending_close}")
             self._pending_close = None
             self._pending_close_time = None
+            did_close = True
 
-        # 强制结案
-        if self._open is None:
-            print("ℹ️ [Aggregator] flush(): 无需结案。")
-            return
+        # 2️⃣ 若仍有 open 案件（事故未结束）→ 强制结案
+        if self._open is not None:
+            inc = self._open
+            ev = {
+                "type": "accident_close",
+                "session_id": self.session_id,
+                "incident_id": inc.id,
+                "camera_id": self.camera_id,
+                "start_ts": inc.start_ts,
+                "end_ts": inc.end_ts,
+                "duration_sec": max(0.0, inc.end_ts - inc.start_ts),
+                "peak_confidence": inc.peak_conf,
+                "pos_frames": inc.pos_frames,
+                "reason": "flush_open",
+            }
+            await self.bus.publish(topic_for(_TOPIC_CLOSE_BASE, self.camera_id), ev)
+            print(f"✅ [Aggregator] flush_close {ev}")
+            self._open = None
+            did_close = True
 
-        inc = self._open
-        ev = {
-            "type": "accident_close",
-            "session_id": self.session_id,
-            "incident_id": inc.id,
-            "camera_id": self.camera_id,
-            "start_ts": inc.start_ts,
-            "end_ts": inc.end_ts,
-            "duration_sec": max(0.0, inc.end_ts - inc.start_ts),
-            "peak_confidence": inc.peak_conf,
-            "pos_frames": inc.pos_frames,
-            "reason": "flush_open"
-        }
-        await self.bus.publish(topic_for(_TOPIC_CLOSE_BASE, self.camera_id), ev)
-        print(f"✅ [Aggregator] flush_close {ev}")
-        self._open = None
+        # 3️⃣ 若两者皆无
+        if not did_close:
+            print(f"ℹ️ [Aggregator] flush(): 无需结案。")

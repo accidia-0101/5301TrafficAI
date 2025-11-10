@@ -117,7 +117,6 @@ async def run_accident_detector_multi(
             while True:
                 f: Frame = await q.get()
                 bufs[cam].append(f)
-                print(f"[collector] {cam} idx={f.frame_idx} pts={f.pts_in_video}")
 
     collectors = [asyncio.create_task(_collector(cam)) for cam in camera_ids]
 
@@ -152,7 +151,6 @@ async def run_accident_detector_multi(
 
             if _LOG_BATCH:
                 cams = ",".join([it.cam for it in batch_items])
-                print(f"[infer] batch={len(batch_items)} cams=[{cams}]")
 
             # 拆分结果并发布
             for it, res in zip(batch_items, results):
@@ -175,11 +173,7 @@ async def run_accident_detector_multi(
                 )
                 await bus.publish(topic_for("accident", it.cam), det)
 
-                # 逐帧日志（可按需打开）
-                print(
-                    f"[out ][{it.cam}] idx={det.frame_idx:05d} pts={det.pts_in_video:7.3f} "
-                    f"conf={det.confidence:5.3f} happened={det.happened}"
-                )
+
 
     finally:
         for t in collectors:
