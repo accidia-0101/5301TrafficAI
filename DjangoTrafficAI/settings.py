@@ -44,7 +44,8 @@ INSTALLED_APPS = [
     "events",
     "pgvector.django",
     'api',
-    'corsheaders'
+    'corsheaders',
+    'rag'
 ]
 
 MIDDLEWARE = [
@@ -55,7 +56,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    'corsheaders.middleware.CorsMiddleware'
+    'corsheaders.middleware.CorsMiddleware',
 ]
 
 ROOT_URLCONF = "DjangoTrafficAI.urls"
@@ -87,12 +88,10 @@ DATABASES = {
         "ENGINE": "django.db.backends.postgresql",
         "HOST": os.getenv("PGHOST", "127.0.0.1"),   # 或你的远程IP
         "PORT": os.getenv("PGPORT", "5432"),
-        "NAME": os.getenv("PGDATABASE", "db_Traffic"),  # ← 就写 Db_Traffic
+        "NAME": os.getenv("PGDATABASE", "db_traffic_final"),  # ← 就写 Db_Traffic
         "USER": os.getenv("PGUSER", "postgres"),
         "PASSWORD": os.getenv("PGPASSWORD", "abc0090"),
         "CONN_MAX_AGE": 60,
-        # 如果你的表不在 public schema，取消下面注释并填你的 schema 名
-        # "OPTIONS": {"options": "-c search_path=your_schema,public"},
     }
 
 }

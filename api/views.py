@@ -1,11 +1,18 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import json, time
-from django.http import JsonResponse, HttpRequest
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST, require_GET
+
+import json
+import time
+
+from django.http import HttpRequest
+from django.views.decorators.http import require_GET
+# api/views_rag.py
+from django.views.decorators.http import require_POST
+
 import api.runtime_state as rt
 from api.session_manager import SessionManager
+from rag.local_llm import generate_local_answer
+from rag.rag_service import search_similar_events
 
 
 def _json(req: HttpRequest) -> dict:
@@ -13,6 +20,9 @@ def _json(req: HttpRequest) -> dict:
         return json.loads(req.body.decode("utf-8")) if req.body else {}
     except Exception:
         return {}
+
+from django.views.decorators.csrf import csrf_exempt
+from django.http import JsonResponse
 
 
 # -------- /api/play --------
@@ -33,6 +43,7 @@ def play_view(request: HttpRequest):
 
 
 # -------- /sse/alerts --------
+@csrf_exempt
 @require_GET
 def alerts_stream(request: HttpRequest):
     loop = rt.ensure_bg_loop()
@@ -52,3 +63,49 @@ def stop_view(request: HttpRequest):
         "stopped_cameras": stopped,
         "ts": int(time.time())
     })
+
+
+
+
+
+
+# @csrf_exempt
+# @require_POST
+# def rag_ask_view(request):
+#     import json
+#     body = json.loads(request.body or "{}")
+#     query = body.get("query", "").strip()
+#     if not query:
+#         return JsonResponse({"error": "empty query"}, status=400)
+#
+#     results = search_similar_events(query)
+#     context = "\n".join(r["text"] for r in results)
+#     answer = generate_local_answer(query, context)
+#
+#     return JsonResponse({"query": query, "answer": answer, "results": results})
+# api/views_rag.py
+
+
+
+@csrf_exempt
+def ask_view(request):
+    body = json.loads(request.body or "{}")
+    query = body.get("query", "").strip()
+    if not query:
+        return JsonResponse({"error": "empty query"}, status=400)
+
+    # 检索事件
+    results = search_similar_events(query)
+
+    # 拼接 evidence_text
+    context = "\n".join([f"[{r['camera']} {r['timestamp']}] {r['text']}" for r in results])
+
+    # 生成回答
+    answer = generate_local_answer(query, context)
+
+    return JsonResponse({
+        "query": query,
+        "answer": answer,
+        "results": results,
+    })
+
