@@ -1,16 +1,3 @@
-# from configs.camera_sources import get_source
-#
-# # ...
-# camera_id = (body.get("camera_id") or "").strip()
-# try:
-#     file_path = get_source(camera_id)
-# except Exception as e:
-#     return JsonResponse({"ok": False, "error": str(e)}, status=400)
-#
-# # 后面全部沿用你现有流程：
-# # session = SESSION_MANAGER.ensure_single_file_session(camera_id=camera_id, file_path=file_path, ...)
-# # session.start_if_needed()
-# # return JsonResponse({...})
 CAMERA_SOURCES: dict[str, dict] = {
     "cam-1": {
         "src": r"E:\Training\Recording 2025-10-30 172929.mp4",

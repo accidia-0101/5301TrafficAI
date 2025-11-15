@@ -42,3 +42,24 @@ AsyncBus  异步并发（asynchronous concurrency）。
 # 测试案例在train&test里面的test_picture和test_video
 给三个短视频用于测试后续会找更多视频
 # 训练数据在train&test里面的train_data
+
+
+
+# 天气数据要引入
+@InProceedings{bdd100k,
+    author = {Yu, Fisher and Chen, Haofeng and Wang, Xin and Xian, Wenqi and Chen, Yingying and Liu, Fangchen and Madhavan, Vashisht and Darrell, Trevor},
+    title = {BDD100K: A Diverse Driving Dataset for Heterogeneous Multitask Learning},
+    booktitle = {The IEEE Conference on Computer Vision and Pattern Recognition (CVPR)},
+    month = {June},
+    year = {2020}
+}
+用mobilenet_v3_small训练的
+# 训练过程关键结果参数
+[INFO] raw clear=51082, rain=5083
+[INFO] downsample clear → 12000
+[INFO] oversample rain → 12000
+[Epoch 1/5] TrainLoss=114.663 TrainAcc=0.8517 | ValLoss=11.404 ValAcc=0.8650
+[Epoch 2/5] TrainLoss=85.709 TrainAcc=0.8914 | ValLoss=10.360 ValAcc=0.8762
+[Epoch 3/5] TrainLoss=70.039 TrainAcc=0.9135 | ValLoss=8.824 ValAcc=0.9033
+[Epoch 4/5] TrainLoss=55.750 TrainAcc=0.9346 | ValLoss=8.649 ValAcc=0.9142
+[Epoch 5/5] TrainLoss=42.907 TrainAcc=0.9518 | ValLoss=8.304 ValAcc=0.9237

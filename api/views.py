@@ -65,29 +65,8 @@ def stop_view(request: HttpRequest):
     })
 
 
-
-
-
-
-# @csrf_exempt
-# @require_POST
-# def rag_ask_view(request):
-#     import json
-#     body = json.loads(request.body or "{}")
-#     query = body.get("query", "").strip()
-#     if not query:
-#         return JsonResponse({"error": "empty query"}, status=400)
-#
-#     results = search_similar_events(query)
-#     context = "\n".join(r["text"] for r in results)
-#     answer = generate_local_answer(query, context)
-#
-#     return JsonResponse({"query": query, "answer": answer, "results": results})
-# api/views_rag.py
-
-
-
 @csrf_exempt
+@require_POST
 def ask_view(request):
     body = json.loads(request.body or "{}")
     query = body.get("query", "").strip()
