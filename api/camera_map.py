@@ -17,7 +17,9 @@ CAMERA_SOURCES: dict[str, dict] = {
     },
     "cam-2": {
         "src": r"E:\Training\Recording 2025-11-02 172630.mp4",
-
+    },
+    "cam-3": {
+        "src": r"E:\Training\Recording 2025-11-14 231727.mp4",
     }
 }
 
