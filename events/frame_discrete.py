@@ -1,13 +1,23 @@
-
+# -----------------------------------------------------------------------------
+# Copyright (c) 2025
+#
+# Authors:
+#   Liruo Wang
+#       School of Electrical Engineering and Computer Science,
+#       University of Ottawa
+#       lwang032@uottawa.ca
+#
+# All rights reserved.
+# -----------------------------------------------------------------------------
 from events.bus import Frame, AsyncBus, topic_for
 import cv2, time, asyncio, os
 
-
 async def run_frame_source_raw(bus: AsyncBus, camera_id: str, url_or_path: str):
     """
-    不降帧视频源：逐帧解码并发布到 frames_raw:<camera_id>
-    - 每帧包含 frame_idx 和 pts_in_video（视频时间秒）
+    Non-downsampled video source: decode frames sequentially and publish to frames_raw:<camera_id>
+    - Each frame includes frame_idx and pts_in_video (video timestamp in seconds)
     """
+
     cap = cv2.VideoCapture(url_or_path, cv2.CAP_FFMPEG)
     try:
         is_file = os.path.exists(url_or_path)
@@ -19,7 +29,7 @@ async def run_frame_source_raw(bus: AsyncBus, camera_id: str, url_or_path: str):
         while True:
             ok, bgr = cap.read()
             if not ok:
-                # 文件播完则退出，直播源则短暂等待
+                # Exit when the file ends; for live sources, wait briefly
                 if is_file:
                     break
                 await asyncio.sleep(0.01)
@@ -36,11 +46,11 @@ async def run_frame_source_raw(bus: AsyncBus, camera_id: str, url_or_path: str):
                 pts_in_video=pts,
             )
 
-            # ✅ 分区发布：frames_raw:<camera_id>
+            # Partitioned publish: frames_raw:<camera_id>
             await bus.publish(topic_for("frames_raw", camera_id), f)
             frame_idx += 1
 
-            # 防止阻塞事件循环
+            # Prevent blocking the event loop
             await asyncio.sleep(0)
 
     finally:
@@ -54,9 +64,10 @@ async def run_frame_source_raw(bus: AsyncBus, camera_id: str, url_or_path: str):
 
 async def run_sampler_equal_time(bus: AsyncBus, camera_id: str, target_fps: float = 60.0, jitter_epsilon: float = 1e-4):
     """
-    等时采样：从 frames_raw:<camera_id> 取帧，按目标 FPS 均匀采样，
-    发布到 frames:<camera_id>。
+    Equal-interval sampling: pull frames from frames_raw:<camera_id>, sample them uniformly
+    according to the target FPS, and publish to frames:<camera_id>.
     """
+
     step = 1.0 / max(1e-3, target_fps)
     next_t = None
 
@@ -67,7 +78,7 @@ async def run_sampler_equal_time(bus: AsyncBus, camera_id: str, target_fps: floa
         while True:
             f: Frame = await sub.get()
 
-            # 初始化采样时钟
+            # Initialize sampling clock
             if next_t is None:
                 next_t = f.pts_in_video
 

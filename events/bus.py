@@ -1,24 +1,37 @@
 """
-简洁稳定的异步事件总线（AsyncBus）
-- 分区主题：topic_for("frames", "cam-1") -> "frames:cam-1"
-- 订阅：async with bus.subscribe(topic, mode="fifo"|"latest", maxsize=64) as q: item = await q.get()
-- 发布：await bus.publish(topic, item)
-- 分区发布：await bus.publish_partitioned(base, camera_id, item)
-- 特点：发布端永不阻塞；慢订阅者丢旧保新；订阅退出自动清理
+Asynchronous Event Bus (AsyncBus)
+- Partitioned topics: topic_for("frames", "cam-1") -> "frames:cam-1"
+- Subscribe:
+    async with bus.subscribe(topic, mode="fifo"|"latest", maxsize=64) as q:
+        item = await q.get()
+- Publish: await bus.publish(topic, item)
+- Partitioned publish: await bus.publish_partitioned(base, camera_id, item)
+- Publishers never block; slow subscribers drop old items and keep the latest; subscriptions auto-clean on exit
 """
+# -----------------------------------------------------------------------------
+# Copyright (c) 2025
+#
+# Authors:
+#   Liruo Wang
+#       School of Electrical Engineering and Computer Science,
+#       University of Ottawa
+#       lwang032@uottawa.ca
+#
+# All rights reserved.
+# -----------------------------------------------------------------------------
 from dataclasses import dataclass
 from typing import Any, Optional, Dict, List
 import asyncio
 from contextlib import asynccontextmanager
-import numpy as np  # 仅用于类型注解
+import numpy as np
 
-# ---------- 分区主题工具 ----------
+# Partitioned Topic Utilities
 def topic_for(base: str, camera_id: Optional[str] = None) -> str:
-    """构造分区主题名，如 'frames_raw:cam-1'。"""
+    """Construct a partitioned topic name, e.g., 'frames_raw:cam-1'."""
     return f"{base}:{camera_id}" if camera_id else base
 
 
-# ---------- 数据结构 ----------
+# Data Structures
 @dataclass(slots=True)
 class Frame:
     camera_id: str
@@ -39,7 +52,7 @@ class Detection:
     pts_in_video: float = 0.0
 
 
-# ---------- 订阅端 ----------
+# Subscriber Side
 class _Subscriber:
     __slots__ = ("queue", "mode")
 
@@ -81,22 +94,23 @@ class _Subscriber:
                     pass
 
 
-# ---------- 异步事件总线 ----------
+# Asynchronous Event Bus
 class AsyncBus:
     """
-    简单稳定的 Pub/Sub：
-      - subscribe(topic, mode='fifo'|'latest', maxsize=64)
-      - publish(topic, item) 非阻塞
-      - publish_partitioned(base, camera_id, item)
-      - subscribe_many(topics) 合并订阅多个主题
+    Pub/Sub:
+    - subscribe(topic, mode='fifo'|'latest', maxsize=64)
+    - publish(topic, item) is non-blocking
+    - publish_partitioned(base, camera_id, item)
+    - subscribe_many(topics) to merge multiple topic subscriptions
     """
+
     __slots__ = ("_topics", "_lock")
 
     def __init__(self):
         self._topics: Dict[str, List[_Subscriber]] = {}
         self._lock = asyncio.Lock()
 
-    # 单主题订阅
+    # Single-topic subscription
     @asynccontextmanager
     async def subscribe(self, topic: str, *, mode: str = "fifo", maxsize: int = 64):
         sub = _Subscriber(mode=mode, maxsize=maxsize)
@@ -117,10 +131,10 @@ class AsyncBus:
                         self._topics.pop(topic, None)
             print(f"[bus] unsubscribe -> {topic}")
 
-    # 多主题订阅（合并）
+    # Multi-topic subscription (merged)
     @asynccontextmanager
     async def subscribe_many(self, topics: List[str], *, mode: str = "fifo", maxsize: int = 64):
-        """一次订阅多个主题并合并输出队列"""
+        """Subscribe to multiple topics at once and merge their output queues."""
         subs: List[_Subscriber] = []
         merged_q: asyncio.Queue = asyncio.Queue(maxsize=maxsize)
 
@@ -149,7 +163,7 @@ class AsyncBus:
                         self._topics.pop(t, None)
                     print(f"[bus] unsubscribe_many -> {t}")
 
-    # 发布
+
     async def publish(self, topic: str, item: Any) -> None:
         async with self._lock:
             subs = list(self._topics.get(topic, []))
@@ -160,8 +174,7 @@ class AsyncBus:
                 sub.deliver(item)
             except Exception:
                 continue
-        # ✅ 日志可选
-        # print(f"[bus.publish] {topic}")
+
 
     async def publish_partitioned(self, base: str, camera_id: str, item: Any) -> None:
         await self.publish(topic_for(base, camera_id), item)

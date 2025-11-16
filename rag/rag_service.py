@@ -1,9 +1,25 @@
-# rag/logic/rag_service.py
+# -----------------------------------------------------------------------------
+# Copyright (c) 2025
+#
+# Authors:
+#   Liruo Wang
+#       School of Electrical Engineering and Computer Science,
+#       University of Ottawa
+#       lwang032@uottawa.ca
+#
+#   Zhenyan Xing
+#       School of Electrical Engineering and Computer Science,
+#       University of Ottawa
+#       zxing045@uottawa.ca
+#
+# All rights reserved.
+# This file is totally written by Zhenyan Xing,modify by Liruo Wang.
+# -----------------------------------------------------------------------------
 from sentence_transformers import SentenceTransformer
 from pgvector.django import CosineDistance
 from events.models import Event,Camera
 
-# 单例缓存模型
+# Singleton cached model
 _embedder = None
 
 
@@ -19,7 +35,7 @@ def search_similar_events(query: str, top_k: int = 5):
     model = get_embedder()
     q_vec = model.encode(query, normalize_embeddings=True).tolist()
 
-    # 1) 自动识别 camera id（简单规则）
+    # 1) Automatically identify camera ID (simple heuristic)
     cam_id = None
     for cam in Camera.objects.values_list("camera_id", flat=True):
         if cam.lower() in query.lower():
@@ -28,15 +44,15 @@ def search_similar_events(query: str, top_k: int = 5):
 
     qs = Event.objects.all()
 
-    # 2) 如果识别到 camera，加过滤（避免无关事件）
+    # 2) If a camera ID is identified, apply filtering (to avoid unrelated events)
     if cam_id:
         qs = qs.filter(camera__camera_id=cam_id)
 
-    # 3) 加相似度距离（避免完全不相关的事件）
+    # 3) Add similarity distance filtering (to avoid completely unrelated events)
     d = CosineDistance("embedding", q_vec)
     qs = qs.annotate(dist=d).filter(dist__lt=0.6).order_by("dist")[:top_k]
 
-    # 4) 返回格式
+    # 4) Return format
     results = []
     for e in qs:
         results.append({

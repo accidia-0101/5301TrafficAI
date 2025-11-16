@@ -1,9 +1,21 @@
+# -----------------------------------------------------------------------------
+# Copyright (c) 2025
+#
+# Authors:
+#   Liruo Wang
+#       School of Electrical Engineering and Computer Science,
+#       University of Ottawa
+#       lwang032@uottawa.ca
+#
+# All rights reserved.
+# -----------------------------------------------------------------------------
 
 """
-SessionManager：统一调度摄像头任务、检测器与 SSE 推送
-+ 后台入库（随机近一周时间、weather=clear、evidence_text）
-+ 实时生成 embedding（bge-base-en-v1.5 / 768 维）
+SessionManager: unified scheduler for camera tasks, detectors, and SSE broadcasting.
+Handles background database insertion (randomized timestamps within the past week, evidence_text),
+and generates embeddings in real time (bge-base-en-v1.5 / 768 dimensions).
 """
+
 from __future__ import annotations
 
 import asyncio, time, json, random
@@ -18,6 +30,7 @@ from asgiref.sync import sync_to_async
 import api.runtime_state as rt
 from events.camera_pipeline import SingleFileSession
 from events.Accident_detect.accident_detector import run_accident_detector_multi
+from events.Weather_detect.weather_detector import run_weather_detector_multi  # ★ 新增天气多路检测器
 from events.models import Event, Camera
 
 # ---------- 嵌入模型（768 维） ----------
@@ -26,67 +39,74 @@ import numpy as np
 
 _EMBED_MODEL: SentenceTransformer | None = None
 
+
 def _get_embedder() -> SentenceTransformer:
     global _EMBED_MODEL
     if _EMBED_MODEL is None:
-        # 首次会下载权重；常驻内存
+        # Downloads weights on first use; stays resident in memory
         _EMBED_MODEL = SentenceTransformer("BAAI/bge-base-en-v1.5")
     return _EMBED_MODEL
+
 
 def _embed_text(text: str) -> list[float]:
     emb = _get_embedder().encode(text, normalize_embeddings=True)  # np.ndarray (768,)
     return emb.astype(np.float32).tolist()
 
-# ---------- 工具 ----------
+
+#tools
 def _random_recent_ts():
     now = timezone.now()
     return now - timedelta(seconds=random.randint(0, 7 * 24 * 3600))
+
 
 def _make_evidence_text(evt: dict) -> str:
     cam = evt.get("camera_id", "unknown")
     conf = float(evt.get("peak_confidence", evt.get("confidence", 0.0)))
     dur = evt.get("duration_sec")
-    return (f"Accident (closed) on {cam}, peak confidence {conf:.2f}, duration {float(dur):.1f}s."
-            if dur is not None else f"Accident (open) on {cam}, confidence {conf:.2f}.")
+    return (
+        f"Accident (closed) on {cam}, peak confidence {conf:.2f}, duration {float(dur):.1f}s."
+        if dur is not None
+        else f"Accident (open) on {cam}, confidence {conf:.2f}."
+    )
 
-# 后台入库队列
+
+# Background queue for database insertion
 SAVE_QUEUE: asyncio.Queue = asyncio.Queue(maxsize=512)
+
 
 @sync_to_async
 def _save_event_to_db(evt: dict):
-    """执行一次事件入库：保证 camera、生成 evidence_text 与 embedding"""
+    """Perform a single event insertion: ensure camera exists, generate evidence_text and embedding."""
+
     cam_id = evt.get("camera_id")
     if not cam_id:
         return
-
-    # 确保 camera 存在（映射到 db_table='cameras'）
     Camera.objects.get_or_create(camera_id=cam_id)
-
     ts = _random_recent_ts()
     conf = float(evt.get("peak_confidence", evt.get("confidence", 0.0)))
     text = _make_evidence_text(evt)
-
-    # 生成 768 维向量（与 VECTOR(768) 对齐）
+    weather = evt.get("weather")
     try:
         vec = _embed_text(text)
     except Exception as e:
         print(f"[EMB] embed failed: {e}")
         vec = None
 
-    # 写入 events 表（db_table='events'）
+    # Write to the events table (db_table='events')
     Event.objects.create(
         timestamp=ts,
-        camera_id=cam_id,          # 外键列名 camera_id（模型里 db_column 已指定）
+        camera_id=cam_id,  # Foreign key column 'camera_id' (db_column specified in the model)
         type="accident",
-        weather="clear",           # 暂无天气检测：默认 clear
+        weather=weather,  # Weather not yet logged: default to 'clear' (can be replaced with event weather later)
         confidence=conf,
         evidence_text=text,
-        embedding=vec,             # 实时写入 embedding
+        embedding=vec,  # Write embedding in real time
     )
     print(f"[DB] saved accident event for {cam_id} ({conf:.2f})")
 
+
 async def _save_worker():
-    """后台消费者：从 SAVE_QUEUE 取事件并入库，不阻塞 SSE。"""
+    """Background consumer: fetch events from SAVE_QUEUE and insert them into the database without blocking SSE."""
     while True:
         evt = await SAVE_QUEUE.get()
         try:
@@ -96,7 +116,8 @@ async def _save_worker():
         finally:
             SAVE_QUEUE.task_done()
 
-# ================== 核心管理类 ==================
+
+# Core Management Class
 class SessionManager:
     GLOBAL_SSE_ID = "sse-main"
 
@@ -128,6 +149,7 @@ class SessionManager:
             print("[manager] no camera registered.")
             return
 
+        # Start each SingleFileSession (frame source + sampler + aggregator)
         for cid in camera_ids:
             if cid not in rt.SESSIONS:
                 sess = SingleFileSession(
@@ -144,16 +166,36 @@ class SessionManager:
             print("[manager] no active cameras.")
             return
 
+        # Start the multi-stream accident detector (YOLO)
         if rt.DETECTOR_TASK is None or rt.DETECTOR_TASK.done():
             async def _run_multi():
-                print(f"[manager] detector started for {active_cams}")
+                print(f"[manager] accident detector started for {active_cams}")
                 await run_accident_detector_multi(
                     rt.BUS,
                     camera_ids=active_cams,
                     batch_size=4,
                     poll_ms=50,
                 )
+
             rt.DETECTOR_TASK = asyncio.run_coroutine_threadsafe(_run_multi(), loop)
+
+        # Start the multi-stream weather detector (CNN)
+        # Requires WEATHER_TASK = None in api.runtime_state
+        if not hasattr(rt, "WEATHER_TASK"):
+            rt.WEATHER_TASK = None
+
+        if rt.WEATHER_TASK is None or rt.WEATHER_TASK.done():
+            async def _run_weather():
+                print(f"[manager] weather detector started for {active_cams}")
+                await run_weather_detector_multi(
+                    rt.BUS,
+                    camera_ids=active_cams,
+                    batch_size=4,
+                    poll_ms=100,
+                    interval_sec=300,  # detect every 5mins
+                )
+
+            rt.WEATHER_TASK = asyncio.run_coroutine_threadsafe(_run_weather(), loop)
 
     @staticmethod
     def stop_all(loop) -> List[str]:
@@ -163,43 +205,62 @@ class SessionManager:
             stopped.append(cid)
             rt.SESSIONS.pop(cid, None)
             rt.INTENDED.pop(cid, None)
+
+        # stop accident-detector
         if rt.DETECTOR_TASK:
             rt.DETECTOR_TASK.cancel()
             rt.DETECTOR_TASK = None
+
+        # stop climate-detector
+        if hasattr(rt, "WEATHER_TASK") and rt.WEATHER_TASK:
+            rt.WEATHER_TASK.cancel()
+            rt.WEATHER_TASK = None
+
         print(f"[manager] stopped all cameras")
         return stopped
 
     @staticmethod
     def stream(loop):
-        """SSE 推送 + 入库（后台队列）"""
+        """SSE broadcasting + database insertion (background queue)"""
         camera_ids = list(rt.INTENDED.keys())
         if not camera_ids:
             return HttpResponse("未注册任何相机源", status=404)
 
-        # 启动后台入库 worker（一次）
+        # Start the background database-insertion worker (run once)
         if not hasattr(rt, "SAVE_WORKER") or rt.SAVE_WORKER is None or rt.SAVE_WORKER.done():
             rt.SAVE_WORKER = asyncio.run_coroutine_threadsafe(_save_worker(), loop)
 
         q: "Queue[bytes]" = Queue(maxsize=256)
 
         async def _pipe():
-            topics = [f"accidents.open:{cid}" for cid in camera_ids] + \
-                     [f"accidents.close:{cid}" for cid in camera_ids]
+            # Subscribe to accident + weather events
+            topics = (
+                    [f"accidents.open:{cid}" for cid in camera_ids]
+                    + [f"accidents.close:{cid}" for cid in camera_ids]
+                    + [f"weather:{cid}" for cid in camera_ids]
+            )
+
             async with rt.BUS.subscribe_many(topics, mode="fanout", maxsize=64) as subq:
                 while True:
                     evt = await subq.get()
+                    cid = evt.get("camera_id", "unknown")
 
-                    # 入库：仅 open（close 可按需扩展）
+                    # (1) Weather events → update cache
+                    if evt.get("type") == "weather":
+                        rt.LAST_WEATHER[cid] = evt.get("weather", "clear")
+
+                    # (2) Accident events → automatically attach weather field before inserting into the database
                     if evt.get("type") == "accident_open":
+                        evt["weather"] = rt.LAST_WEATHER.get(cid, "clear")
+
                         try:
-                            SAVE_QUEUE.put_nowait(evt)   # 非阻塞；队满时可按需丢弃策略
+                            SAVE_QUEUE.put_nowait(evt)
                         except asyncio.QueueFull:
                             print("[warn] SAVE_QUEUE full, dropping event")
 
-                    # 原有 SSE 推送
-                    cid = evt.get("camera_id", "unknown")
+                    # (3) Unified SSE broadcasting
                     payload = (
-                        f"id: {SessionManager.GLOBAL_SSE_ID}-{int(time.time()*1000)}\n"
+                        f"id: {SessionManager.GLOBAL_SSE_ID}-{int(time.time() * 1000)}\n"
                         f"event: {cid}\n"
                         f"data: {json.dumps(evt, ensure_ascii=False)}\n\n"
                     )
@@ -215,6 +276,7 @@ class SessionManager:
         asyncio.run_coroutine_threadsafe(_pipe(), loop)
 
         def _stream():
+            # Initial connection message
             yield f": connected sse_id={SessionManager.GLOBAL_SSE_ID}\n\n".encode()
             last = time.time()
             try:
@@ -224,6 +286,7 @@ class SessionManager:
                         yield chunk
                     except Empty:
                         if time.time() - last >= 10:
+                            # heartbeat
                             yield b": ping\n\n"
                             last = time.time()
             finally:

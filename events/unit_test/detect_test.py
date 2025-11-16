@@ -1,16 +1,28 @@
-# -*- coding: utf-8 -*-
 """
-本地视频一键检测脚本（多路并发友好，按相机分区主题）
-- 源：frames_raw:<camera_id>
-- 采样：frames:<camera_id>
-- 检测：accident:<camera_id>
-- 聚合：accidents.open:<camera_id> / accidents.close:<camera_id>
+One-click local video detection script (multi-stream friendly, partitioned by camera topic)
+- Source:        frames_raw:<camera_id>
+- Sampler:       frames:<camera_id>
+- Detector:      accident:<camera_id>
+- Aggregator:    accidents.open:<camera_id> / accidents.close:<camera_id>
 
-使用方法：
-1) 修改 VIDEO_PATH 指向本地视频文件。
-2) python -m events.unit_test.local_video_detect  （或直接 python local_video_detect.py）
-3) 观察终端中开案/结案日志。
+Usage:
+1) Set VIDEO_PATH to point to the local video file.
+2) Run: python -m events.unit_test.local_video_detect
+       (or simply: python local_video_detect.py)
+3) Observe open/close event logs in the terminal.
 """
+
+# -----------------------------------------------------------------------------
+# Copyright (c) 2025
+#
+# Authors:
+#   Liruo Wang
+#       School of Electrical Engineering and Computer Science,
+#       University of Ottawa
+#       lwang032@uottawa.ca
+#
+# All rights reserved.
+# -----------------------------------------------------------------------------
 from __future__ import annotations
 
 import asyncio

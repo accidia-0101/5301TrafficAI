@@ -1,3 +1,14 @@
+# -----------------------------------------------------------------------------
+# Copyright (c) 2025
+#
+# Authors:
+#   Liruo Wang
+#       School of Electrical Engineering and Computer Science,
+#       University of Ottawa
+#       lwang032@uottawa.ca
+#
+# All rights reserved.
+# -----------------------------------------------------------------------------
 import uuid
 
 from django.db import models
@@ -5,7 +16,8 @@ from pgvector.django import VectorField
 
 
 class Camera(models.Model):
-    """映射数据库表 cameras（多路相机）"""
+    """Map to the database table 'cameras' (multi-camera support)."""
+
     camera_id = models.CharField(max_length=64, primary_key=True)
 
     class Meta:
@@ -18,6 +30,7 @@ class Camera(models.Model):
 
 
 class Event(models.Model):
+    """Map to the database table 'events' (event records)."""
     event_id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,     # ✅ 自动生成唯一UUID

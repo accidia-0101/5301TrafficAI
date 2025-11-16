@@ -1,4 +1,21 @@
-# -*- coding: utf-8 -*-
+# -----------------------------------------------------------------------------
+# Copyright (c) 2025
+#
+# Authors:
+#   Liruo Wang
+#       School of Electrical Engineering and Computer Science,
+#       University of Ottawa
+#       lwang032@uottawa.ca
+#
+#   Zhenyan Xing
+#       School of Electrical Engineering and Computer Science,
+#       University of Ottawa
+#       zxing045@uottawa.ca
+#
+# All rights reserved.
+# This file is written mainly by Liruo Wang,modify by Zhenyan Xing.
+# -----------------------------------------------------------------------------
+
 from __future__ import annotations
 
 import json
@@ -6,7 +23,6 @@ import time
 
 from django.http import HttpRequest
 from django.views.decorators.http import require_GET
-# api/views_rag.py
 from django.views.decorators.http import require_POST
 
 import api.runtime_state as rt
@@ -25,7 +41,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 
 
-# -------- /api/play --------
+# api/play
 @csrf_exempt
 @require_POST
 def play_view(request: HttpRequest):
@@ -42,7 +58,7 @@ def play_view(request: HttpRequest):
     return JsonResponse({"ok": True, **data})
 
 
-# -------- /sse/alerts --------
+# sse/alerts
 @csrf_exempt
 @require_GET
 def alerts_stream(request: HttpRequest):
@@ -51,7 +67,7 @@ def alerts_stream(request: HttpRequest):
     return SessionManager.stream(loop)
 
 
-# -------- /api/stop --------
+# api/stop
 @csrf_exempt
 @require_POST
 def stop_view(request: HttpRequest):
@@ -73,13 +89,13 @@ def ask_view(request):
     if not query:
         return JsonResponse({"error": "empty query"}, status=400)
 
-    # 检索事件
+    # Retrieve events
     results = search_similar_events(query)
 
-    # 拼接 evidence_text
+    # Construct evidence_text
     context = "\n".join([f"[{r['camera']} {r['timestamp']}] {r['text']}" for r in results])
 
-    # 生成回答
+    # Generate the response
     answer = generate_local_answer(query, context)
 
     return JsonResponse({
